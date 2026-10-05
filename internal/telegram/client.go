@@ -1,19 +1,19 @@
 package telegram
 
 import (
-	"context"
-	"fmt"
-	"net"
-	"net/url"
-	"os"
-	"sync"
-	"time"
+    "context"
+    "fmt"
+    "net"
+    "net/url"
+    "os"
+    "sync"
+    "time"
 
-	"github.com/gotd/td/telegram"
-	"github.com/gotd/td/telegram/dcs"
-	"github.com/gotd/td/tg"
-	"golang.org/x/net/proxy"
-	"teledrive/internal/db"
+    "github.com/gotd/td/telegram"
+    "github.com/gotd/td/telegram/dcs"
+    "github.com/gotd/td/tg"
+    "golang.org/x/net/proxy"
+    "teledrive/internal/db"
 )
 
 type ClientManager struct {
@@ -48,6 +48,9 @@ options := telegram.Options{
     SessionStorage: storage,
     Device:         device,
 
+    // SOCKS5 单次连接建立最多等待 10 秒。
+    DialTimeout: 10 * time.Second,
+
     OnConnectionState: func(state telegram.ConnectionState) {
         fmt.Printf(
             "[telegram] connection state: %v\n",
@@ -68,7 +71,10 @@ proxyURL := os.Getenv("TELEDRIVE_PROXY")
 if proxyURL != "" {
     u, err := url.Parse(proxyURL)
     if err != nil {
-        panic(fmt.Sprintf("invalid TELEDRIVE_PROXY: %v", err))
+        panic(fmt.Sprintf(
+            "invalid TELEDRIVE_PROXY: %v",
+            err,
+        ))
     }
 
     if u.Scheme != "socks5" && u.Scheme != "socks5h" {
@@ -107,36 +113,54 @@ if proxyURL != "" {
         panic("SOCKS5 dialer does not implement proxy.ContextDialer")
     }
 
-options.Resolver = dcs.Plain(dcs.PlainOptions{
-    Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-        fmt.Printf(
-            "[telegram] SOCKS5 dial: network=%s address=%s\n",
-            network,
-            address,
-        )
+    options.Resolver = dcs.Plain(dcs.PlainOptions{
+        Dial: func(
+            ctx context.Context,
+            network string,
+            address string,
+        ) (net.Conn, error) {
 
-        conn, err := contextDialer.DialContext(
-            ctx,
-            network,
-            address,
-        )
+            start := time.Now()
 
-        if err != nil {
             fmt.Printf(
-                "[telegram] SOCKS5 dial failed: %v\n",
-                err,
+                "[telegram] SOCKS5 dial: network=%s address=%s\n",
+                network,
+                address,
             )
-            return nil, err
-        }
 
-        fmt.Printf(
-            "[telegram] SOCKS5 dial connected: %s\n",
-            address,
-        )
+            dialCtx, cancel := context.WithTimeout(
+                ctx,
+                10*time.Second,
+            )
+            defer cancel()
 
-        return conn, nil
-    },
-})
+            conn, err := contextDialer.DialContext(
+                dialCtx,
+                network,
+                address,
+            )
+
+            elapsed := time.Since(start)
+
+            if err != nil {
+                fmt.Printf(
+                    "[telegram] SOCKS5 dial failed: address=%s elapsed=%s err=%v\n",
+                    address,
+                    elapsed,
+                    err,
+                )
+                return nil, err
+            }
+
+            fmt.Printf(
+                "[telegram] SOCKS5 dial connected: address=%s elapsed=%s\n",
+                address,
+                elapsed,
+            )
+
+            return conn, nil
+        },
+    })
 }
 
 client := telegram.NewClient(
