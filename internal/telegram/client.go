@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"sync"
@@ -13,6 +14,7 @@ import (
 	"github.com/gotd/td/tg"
 	"golang.org/x/net/proxy"
 	"teledrive/internal/db"
+	"github.com/cenkalti/backoff/v4"
 )
 
 type ClientManager struct {
@@ -46,6 +48,20 @@ func NewClientManager(database *db.DB, appID int, appHash, secretKey string) *Cl
 options := telegram.Options{
     SessionStorage: storage,
     Device:         device,
+
+    OnConnectionState: func(state telegram.ConnectionState) {
+        fmt.Printf(
+            "[telegram] connection state: %v\n",
+            state,
+        )
+    },
+
+    OnDead: func(err error) {
+        fmt.Printf(
+            "[telegram] connection dead: %v\n",
+            err,
+        )
+    },
 }
 
 proxyURL := os.Getenv("TELEDRIVE_PROXY")
@@ -92,9 +108,36 @@ if proxyURL != "" {
         panic("SOCKS5 dialer does not implement proxy.ContextDialer")
     }
 
-    options.Resolver = dcs.Plain(dcs.PlainOptions{
-        Dial: contextDialer.DialContext,
-    })
+options.Resolver = dcs.Plain(dcs.PlainOptions{
+    Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+        fmt.Printf(
+            "[telegram] SOCKS5 dial: network=%s address=%s\n",
+            network,
+            address,
+        )
+
+        conn, err := contextDialer.DialContext(
+            ctx,
+            network,
+            address,
+        )
+
+        if err != nil {
+            fmt.Printf(
+                "[telegram] SOCKS5 dial failed: %v\n",
+                err,
+            )
+            return nil, err
+        }
+
+        fmt.Printf(
+            "[telegram] SOCKS5 dial connected: %s\n",
+            address,
+        )
+
+        return conn, nil
+    },
+})
 }
 
 client := telegram.NewClient(
