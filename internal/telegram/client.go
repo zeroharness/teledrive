@@ -14,7 +14,6 @@ import (
 	"github.com/gotd/td/tg"
 	"golang.org/x/net/proxy"
 	"teledrive/internal/db"
-	"github.com/cenkalti/backoff/v4"
 )
 
 type ClientManager struct {
