@@ -3,11 +3,15 @@ package telegram
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/gotd/td/telegram"
+	"github.com/gotd/td/telegram/dcs"
 	"github.com/gotd/td/tg"
+	"golang.org/x/net/proxy"
 	"teledrive/internal/db"
 )
 
@@ -39,11 +43,65 @@ func NewClientManager(database *db.DB, appID int, appHash, secretKey string) *Cl
 		SystemLangCode: "en",
 	}
 
-	client := telegram.NewClient(appID, appHash, telegram.Options{
-		SessionStorage: storage,
-		Device:         device,
-	})
+options := telegram.Options{
+    SessionStorage: storage,
+    Device:         device,
+}
 
+proxyURL := os.Getenv("TELEDRIVE_PROXY")
+
+if proxyURL != "" {
+    u, err := url.Parse(proxyURL)
+    if err != nil {
+        panic(fmt.Sprintf("invalid TELEDRIVE_PROXY: %v", err))
+    }
+
+    if u.Scheme != "socks5" && u.Scheme != "socks5h" {
+        panic(fmt.Sprintf(
+            "unsupported TELEDRIVE_PROXY scheme: %s",
+            u.Scheme,
+        ))
+    }
+
+    var auth *proxy.Auth
+
+    if u.User != nil {
+        password, _ := u.User.Password()
+
+        auth = &proxy.Auth{
+            User:     u.User.Username(),
+            Password: password,
+        }
+    }
+
+    dialer, err := proxy.SOCKS5(
+        "tcp",
+        u.Host,
+        auth,
+        proxy.Direct,
+    )
+    if err != nil {
+        panic(fmt.Sprintf(
+            "create SOCKS5 proxy failed: %v",
+            err,
+        ))
+    }
+
+    contextDialer, ok := dialer.(proxy.ContextDialer)
+    if !ok {
+        panic("SOCKS5 dialer does not implement proxy.ContextDialer")
+    }
+
+    options.Resolver = dcs.Plain(dcs.PlainOptions{
+        Dial: contextDialer.DialContext,
+    })
+}
+
+client := telegram.NewClient(
+    appID,
+    appHash,
+    options,
+)
 	return &ClientManager{
 		client:    client,
 		api:       tg.NewClient(client),
